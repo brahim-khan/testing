@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cricket Shot Data Collector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+  <h2>Cricket Swing Data Collection</h2>
+
+  <label>Select Shot Type:</label><br>
+  <select id="shot">
+    <option value="">-- Select Shot --</option>
+    <option value="pull">Pull</option>
+    <option value="defense">Defense</option>
+    <option value="coverdrive">Cover Drive</option>
+  </select>
+
+  <br><br>
+
+  <button onclick="connectBLE()">Connect BLE</button>
+  <button onclick="startSwing()">Start Swing</button>
+  <button onclick="stopSwing()">Stop Swing</button>
+  <button onclick="cancelSwing()">Cancel Swing</button>
+
+  <pre id="status">Status: Not connected</pre>
+
+<script>
+let device;
+let characteristic;
+let recording = false;
+let swingId = null;
+
+const SERVICE_UUID = '180c';
+const CHAR_UUID = '2a56';
+const SERVER_URL = "https://YOUR_BACKEND_URL/upload";
+
+async function connectBLE() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: 'CRICKAI_IMU' }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(CHAR_UUID);
+
+    await characteristic.startNotifications();
+    characteristic.addEventListener(
+      'characteristicvaluechanged',
+      onData
+    );
+
+    setStatus("BLE CONNECTED");
+  } catch (e) {
+    setStatus("BLE CONNECTION FAILED");
+  }
+}
+
+function startSwing() {
+  const shot = document.getElementById("shot").value;
+  if (!shot) {
+    alert("Select shot type first");
+    return;
+  }
+
+  if (!characteristic) {
+    alert("BLE not connected");
+    return;
+  }
+
+  swingId = Date.now();
+  recording = true;
+  setStatus("Recording " + shot + " | Swing ID: " + swingId);
+}
+
+function stopSwing() {
+  recording = false;
+  setStatus("Swing saved");
+}
+
+function cancelSwing() {
+  recording = false;
+  swingId = null;
+  setStatus("Swing cancelled (not saved)");
+}
+
+function onData(event) {
+  if (!recording) return;
+
+  const text = new TextDecoder().decode(event.target.value);
+  const values = text.split(',').map(Number);
+  if (values.length !== 6) return;
+
+  const [ax, ay, az, gx, gy, gz] = values;
+
+  fetch(SERVER_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      swing_id: swingId,
+      shot_type: document.getElementById("shot").value,
+      timestamp: Date.now(),
+      ax, ay, az, gx, gy, gz
+    })
+  });
+}
+
+function setStatus(msg) {
+  document.getElementById("status").innerText = "Status: " + msg;
+}
+</script>
+</body>
+</html>
